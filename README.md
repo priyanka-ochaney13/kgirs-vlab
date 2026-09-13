@@ -90,10 +90,14 @@ sections.
 - First Review: **21st–22nd September 2026**.
 - Deliverable: single Python file (`vlab.py`), run via Streamlit.
 
-## References
+## Deployed Link
+- https://priyanka-ochaney13-kgirs-vlab-vlab-ysql9p.streamlit.app/
 
-- [Neo4j — Graph Database Concepts](https://neo4j.com/docs/getting-started/graph-database/)
-- [Neo4j — Cypher Manual](https://neo4j.com/docs/cypher-manual/current/)
-- [NetworkX Documentation](https://networkx.org/documentation/stable/)
-- [IIT Kharagpur Virtual Labs](https://vlab.co.in/)
-- Robinson, I., Webber, J., & Eifrem, E. *Graph Databases* (2nd ed.), O'Reilly Media.
+## Screenshots
+![Aim & Objective](image.png)
+![Theory](image-1.png)
+![Procedure](image-2.png)
+![Pretest](image-3.png)
+![Simulator](image-4.png)
+![Posttest](image-5.png)
+![References](image-6.png)
