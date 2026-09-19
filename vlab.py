@@ -2,28 +2,34 @@
 Virtual Laboratory Experiment (Streamlit)
 Experiment 8 : Create and Manage a Graph Database
 Roll Nos     : 36, 38, 39, 40
-Aim          : Install Neo4j, create nodes and relationships, and perform basic graph operations.
+Aim          : Create nodes and relationships, and perform basic graph operations.
 Outcome      : A functioning graph database containing connected entities.
 
 Sections (as per the lab template):
-  1. Theory            : Aim, objectives, background, Neo4j installation reference, procedure, key terms.
-  2. Simulation        : In-memory graph database (nodes, relationships, CRUD, queries, Cypher-style
+  1. Theory            : Aim, objectives, background, procedure, key terms.
+  2. Simulation        : In-memory graph database (nodes, relationships, CRUD, queries, command
                          console), graph visualisation, metrics, and a trial logger.
-  3. Quiz              : 10-question self-grading assessment with instant feedback.
-  4. Report Generation : Student info, recorded trials, observations, downloadable PDF report.
+  3. Quiz              : 10 random questions drawn from a 50-question bank (quiz_questions.json),
+                         self-graded with instant feedback.
+  4. Report Generation : Student info, recorded trials, observations, downloadable PDF report
+                         (includes the final graph diagram).
 
-The graph database is simulated in memory with plain Python data structures, so the app runs
-without a Neo4j server. Neo4j installation steps are given in the Theory section for reference.
+The graph database is simulated in memory with plain Python data structures, so no database
+server is needed.
 
 Run with : streamlit run vlab.py
+Files    : vlab.py and quiz_questions.json (keep both in the same folder)
 Requires : pip install streamlit networkx matplotlib pandas plotly fpdf2
 """
 
 import io
+import json
 import os
+import random
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 import matplotlib
@@ -45,7 +51,7 @@ EXPERIMENT_CONFIG = {
     "number": 8,
     "title": "Create and Manage a Graph Database",
     "roll_numbers": "36, 38, 39, 40",
-    "aim": "Install Neo4j, create nodes and relationships, and perform basic graph operations.",
+    "aim": "Create nodes and relationships, and perform basic graph operations.",
     "expected_outcome": "A functioning graph database containing connected entities.",
     "objectives": [
         "Understand what a graph database is and how it differs from a relational database.",
@@ -73,30 +79,21 @@ recommendations, fraud detection, knowledge graphs) efficiently.
 | Schema | Fixed | Flexible |
 | Connected queries | Slow as joins get deeper | Traversals stay fast |
 
-### Neo4j and Cypher
-Neo4j is a widely used native graph database. Its query language, **Cypher**, reads like an ASCII
-drawing of the graph:
+### Querying a Graph
+Graph queries describe patterns instead of tables. A pattern reads like an ASCII drawing of the
+graph, with nodes in parentheses and relationships in square brackets:
 
-```cypher
+```text
 CREATE (a:Person {name: "Alice"})
 CREATE (b:Person {name: "Bob"})
 CREATE (a)-[:FRIENDS_WITH]->(b)
 MATCH (p:Person)-[:FRIENDS_WITH]->(q:Person) RETURN p, q
 ```
 
-### Installing Neo4j (reference)
-1. Download Neo4j Desktop or the Community Edition from neo4j.com/download, **or** run it with Docker:
-
-```bash
-docker run -p 7474:7474 -p 7687:7687 -e NEO4J_AUTH=neo4j/test12345 neo4j
-```
-
-2. Open Neo4j Browser at `http://localhost:7474` and sign in with user `neo4j` and your password.
-3. Run the Cypher statements above in the query bar and view the resulting graph.
-
 ### Note on this Virtual Lab
-The simulator reproduces the same concepts (nodes, labels, relationships, properties, traversal)
-with an in-memory Python graph and a Cypher-style console, so it runs without a Neo4j server.
+The simulator implements these concepts (nodes, labels, relationships, properties, traversal)
+with an in-memory Python graph and a command console that accepts commands like the ones above,
+so no database server is needed.
 
 ### Workflow & System Overview
 1. **Create**: Add nodes (with a label and properties) and connect them with typed relationships.
@@ -105,17 +102,16 @@ with an in-memory Python graph and a Cypher-style console, so it runs without a 
     """,
     "procedure": [
         "Step 1: Review the theoretical background, objectives, and key terminology.",
-        "Step 2: (Reference) Install Neo4j and open Neo4j Browser as described above.",
-        "Step 3: Navigate to the Simulation section in the sidebar menu.",
-        "Step 4: Optionally click 'Load Sample Graph' to start from a small pre-built graph.",
-        "Step 5: In 'Create / Update / Delete', add nodes with a label and a name property.",
-        "Step 6: Connect nodes by creating typed, directed relationships (e.g. FRIENDS_WITH).",
-        "Step 7: Update a node property, then delete a node or relationship and observe the graph.",
-        "Step 8: In 'Query', find the neighbors of a node and the shortest path between two nodes.",
-        "Step 9: In 'Command Console', try Cypher-style commands such as CREATE and MATCH.",
-        "Step 10: Click 'Record Current Trial' after each operation (log at least 4 trials).",
-        "Step 11: Complete the assessment Quiz to test your conceptual understanding.",
-        "Step 12: Open Report Generation, enter your details, and download your PDF report."
+        "Step 2: Navigate to the Simulation section in the sidebar menu.",
+        "Step 3: Optionally click 'Load Sample Graph' to start from a small pre-built graph.",
+        "Step 4: In 'Create / Update / Delete', add nodes with a label and a name property.",
+        "Step 5: Connect nodes by creating typed, directed relationships (e.g. FRIENDS_WITH).",
+        "Step 6: Update a node property, then delete a node or relationship and observe the graph.",
+        "Step 7: In 'Query', find the neighbors of a node and the shortest path between two nodes.",
+        "Step 8: In 'Command Console', try graph query commands such as CREATE and MATCH.",
+        "Step 9: Click 'Record Current Trial' after each operation (log at least 4 trials).",
+        "Step 10: Complete the assessment Quiz to test your conceptual understanding.",
+        "Step 11: Open Report Generation, enter your details, and download your PDF report."
     ],
     "key_terms": {
         "Node": "An entity in the graph (e.g. a Person or a Company).",
@@ -123,8 +119,7 @@ with an in-memory Python graph and a Cypher-style console, so it runs without a 
         "Relationship": "A directed, typed connection between two nodes (e.g. FRIENDS_WITH).",
         "Property": "A key-value pair stored on a node or relationship (e.g. name: \"Alice\").",
         "Traversal": "Navigating from node to node by following relationships.",
-        "Shortest Path": "The fewest-hop chain of relationships connecting two nodes.",
-        "Cypher": "Neo4j's declarative graph query language."
+        "Shortest Path": "The fewest-hop chain of relationships connecting two nodes."
     }
 }
 
@@ -132,16 +127,16 @@ SIMULATION_CONFIG = {
     "default_node_label": "Person",
     "default_rel_type": "RELATED_TO",
     "sample_nodes": [
-        ("Person", {"name": "Alice"}),
-        ("Person", {"name": "Bob"}),
-        ("Person", {"name": "Carol"}),
-        ("Company", {"name": "Acme Corp"}),
+        ("Person", {"name": "Priyanka"}),
+        ("Person", {"name": "Supriya"}),
+        ("Person", {"name": "Amogh"}),
+        ("Person", {"name": "Akshit"}),
     ],
     "sample_edges": [
-        ("Alice", "Bob", "FRIENDS_WITH", {}),
-        ("Bob", "Carol", "FRIENDS_WITH", {}),
-        ("Alice", "Acme Corp", "WORKS_AT", {"role": "Engineer"}),
-        ("Carol", "Acme Corp", "WORKS_AT", {"role": "Designer"}),
+        ("Priyanka", "Supriya", "FRIENDS_WITH", {}),
+        ("Supriya", "Amogh", "FRIENDS_WITH", {}),
+        ("Priyanka", "Akshit", "FRIENDS_WITH", {}),
+        ("Amogh", "Akshit", "FRIENDS_WITH", {}),
     ],
     "console_examples": [
         'CREATE (:Person {name:"Dave"})',
@@ -152,128 +147,28 @@ SIMULATION_CONFIG = {
     ],
 }
 
-QUIZ_QUESTIONS = [
-    {
-        "id": 1,
-        "question": "In a property graph, what is a relationship?",
-        "options": [
-            "A) A row stored in a table",
-            "B) A directed, typed connection between two nodes",
-            "C) A constraint placed on a column",
-            "D) An index built on a property"
-        ],
-        "answer_index": 1,
-        "explanation": "A relationship links two nodes, has a direction and a type (e.g. WORKS_AT), and can hold properties."
-    },
-    {
-        "id": 2,
-        "question": "Which of the following is NOT a core component of a property graph?",
-        "options": [
-            "A) Node",
-            "B) Relationship",
-            "C) Property",
-            "D) Foreign-key join table"
-        ],
-        "answer_index": 3,
-        "explanation": "Property graphs use nodes, relationships and properties. Join tables and foreign keys belong to the relational model."
-    },
-    {
-        "id": 3,
-        "question": "What is the name of Neo4j's query language?",
-        "options": [
-            "A) GraphQL",
-            "B) SPARQL",
-            "C) Cypher",
-            "D) Gremlin"
-        ],
-        "answer_index": 2,
-        "explanation": "Cypher is Neo4j's declarative query language; its syntax resembles an ASCII drawing of the graph."
-    },
-    {
-        "id": 4,
-        "question": "Which Cypher clause is used to add a new node to the database?",
-        "options": [
-            "A) MATCH",
-            "B) RETURN",
-            "C) WHERE",
-            "D) CREATE"
-        ],
-        "answer_index": 3,
-        "explanation": "CREATE adds new nodes and relationships. MATCH finds existing patterns, and RETURN outputs results."
-    },
-    {
-        "id": 5,
-        "question": "Why are graph databases efficient for highly connected data?",
-        "options": [
-            "A) They compress every record into a single column",
-            "B) They avoid storing relationships altogether",
-            "C) Relationships are stored directly, so queries follow links instead of running costly joins",
-            "D) They only support very small datasets"
-        ],
-        "answer_index": 2,
-        "explanation": "Relationships are first-class and stored with the nodes, so traversals follow direct links rather than computing joins."
-    },
-    {
-        "id": 6,
-        "question": "What does the pattern (a)-[:WORKS_AT]->(b) express?",
-        "options": [
-            "A) Node b has an outgoing WORKS_AT relationship to node a",
-            "B) Node a has an outgoing WORKS_AT relationship to node b",
-            "C) Nodes a and b are the same node",
-            "D) a and b are both labels"
-        ],
-        "answer_index": 1,
-        "explanation": "The arrow shows direction: the relationship starts at a and points to b."
-    },
-    {
-        "id": 7,
-        "question": "Finding the shortest chain of relationships between two nodes is an example of:",
-        "options": [
-            "A) Graph traversal / path finding",
-            "B) Sharding",
-            "C) Normalization",
-            "D) Indexing"
-        ],
-        "answer_index": 0,
-        "explanation": "Shortest-path search walks (traverses) relationships between nodes to find the route with the fewest hops."
-    },
-    {
-        "id": 8,
-        "question": "Which statement about property graphs is TRUE?",
-        "options": [
-            "A) Only nodes can hold properties",
-            "B) Both nodes and relationships can hold key-value properties",
-            "C) Relationships cannot have a direction",
-            "D) Every node must have exactly the same properties"
-        ],
-        "answer_index": 1,
-        "explanation": "Properties can be attached to nodes and to relationships, and nodes can differ in their properties (flexible schema)."
-    },
-    {
-        "id": 9,
-        "question": "Which of these is a typical use case for a graph database?",
-        "options": [
-            "A) Storing large binary video files",
-            "B) Serving a single flat CSV log",
-            "C) Caching simple key-value session data",
-            "D) Building a recommendation engine from user-item connections"
-        ],
-        "answer_index": 3,
-        "explanation": "Recommendations, social networks and fraud detection depend on connections between entities, which graphs model naturally."
-    },
-    {
-        "id": 10,
-        "question": "In Neo4j, which statement deletes a node together with all of its relationships?",
-        "options": [
-            "A) DROP n",
-            "B) REMOVE n",
-            "C) DETACH DELETE n",
-            "D) CLEAR n"
-        ],
-        "answer_index": 2,
-        "explanation": "A plain DELETE fails if the node still has relationships; DETACH DELETE removes the node and its relationships."
-    }
-]
+# ---- Quiz bank: 50 questions live in quiz_questions.json, 10 are picked at random per session ----
+QUIZ_FILE = Path(__file__).with_name("quiz_questions.json")
+QUIZ_SIZE = 10
+
+
+@st.cache_data
+def load_quiz_bank() -> list:
+    with open(QUIZ_FILE, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def pick_quiz_questions(n: int = QUIZ_SIZE) -> list:
+    """Picks n random questions from the bank and renumbers them 1..n for this session."""
+    bank = load_quiz_bank()
+    picked = random.sample(bank, min(n, len(bank)))
+    return [{**q, "id": i} for i, q in enumerate(picked, start=1)]
+
+
+def quiz_questions() -> list:
+    """The 10 questions drawn for the current session."""
+    return st.session_state["quiz_questions"]
+
 
 NODE_COLOR_PALETTE = [
     "#4C72B0", "#DD8452", "#55A868", "#C44E52",
@@ -282,7 +177,7 @@ NODE_COLOR_PALETTE = [
 
 
 # ======================================================================================
-# 2. SIMULATION ENGINE: IN-MEMORY GRAPH DATABASE + CYPHER-STYLE PARSER
+# 2. SIMULATION ENGINE: IN-MEMORY GRAPH DATABASE + PATTERN-STYLE PARSER
 # ======================================================================================
 
 @dataclass
@@ -398,7 +293,7 @@ class GraphDB:
         return pd.DataFrame(rows, columns=["From", "Relationship", "To", "Properties"])
 
 
-# ---- Simplified Cypher-style parser (used by the Command Console) ----
+# ---- Simplified pattern-style parser (used by the Command Console) ----
 _NODE = r"\(\s*(?:(\w+)\s*)?(?::\s*(\w+)\s*)?(\{[^}]*\})?\s*\)"
 CREATE_NODE_RE = re.compile(rf"^CREATE\s*{_NODE}$", re.IGNORECASE)
 CREATE_REL_RE = re.compile(
@@ -438,7 +333,7 @@ def _node_matches(node: dict, label: Optional[str], props: dict) -> bool:
 
 
 def run_command(db: GraphDB, command: str) -> str:
-    """Interprets one simplified Cypher-style command against the GraphDB."""
+    """Interprets one simplified pattern-style command against the GraphDB."""
     command = command.strip().rstrip(";").strip()
 
     m = CREATE_REL_RE.match(command)
@@ -510,6 +405,17 @@ def set_last_op(operation: str, result: str, flash: bool = False) -> None:
     }
     if flash:
         st.session_state["flash"] = result
+    if not operation.startswith("QUERY"):
+        st.session_state.pop("nbr_result", None)
+        st.session_state.pop("path_result", None)
+
+
+def node_select(label: str, key: str, db: GraphDB):
+    """Selectbox over node ids, so the selection survives a rename. Returns the chosen node id."""
+    ids = list(db.nodes.keys())
+    if st.session_state.get(key) not in ids:
+        st.session_state.pop(key, None)
+    return st.selectbox(label, ids, format_func=db.node_display, key=key)
 
 
 def load_sample_graph() -> None:
@@ -726,6 +632,10 @@ def generate_pdf_report(student_name: str, roll_nos: str, date_str: str,
         pdf.set_y(pdf.get_y() + img_h + 4)
         pdf.set_font("Helvetica", "", 9)
         pdf.set_text_color(51, 65, 85)
+    else:
+        pdf.set_font("Helvetica", "I", 9)
+        pdf.cell(0, 6, "Graph is empty, so no diagram was generated.", new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font("Helvetica", "", 9)
     for e in db.edges[:30]:
         line = f"- {db.node_name(e['src'])} -[{e['type']}]-> {db.node_name(e['dst'])}"
         pdf.multi_cell(0, 5, _pdf_safe(line), new_x="LMARGIN", new_y="NEXT")
@@ -786,10 +696,10 @@ def render_theory_section():
 
     with st.expander("References"):
         st.markdown(
-            "- Neo4j Documentation: Graph Database Concepts: https://neo4j.com/docs/getting-started/\n"
-            "- Neo4j Cypher Manual: https://neo4j.com/docs/cypher-manual/current/\n"
             "- NetworkX Documentation: https://networkx.org/documentation/stable/\n"
-            "- Robinson, I., Webber, J., & Eifrem, E. *Graph Databases* (2nd ed.), O'Reilly Media."
+            "- Streamlit Documentation: https://docs.streamlit.io/\n"
+            "- Angles, R., & Gutierrez, C. (2008). Survey of graph database models. "
+            "*ACM Computing Surveys*, 40(1)."
         )
 
 
@@ -826,12 +736,14 @@ def render_simulation_section():
 
     last_op_slot = st.empty()
 
-    tab_graph, tab_crud, tab_query, tab_console = st.tabs(
-        ["Graph View", "Create / Update / Delete", "Query", "Command Console"]
+    view = st.radio(
+        "Simulation view",
+        ["Graph View", "Create / Update / Delete", "Query", "Command Console"],
+        horizontal=True, key="sim_view", label_visibility="collapsed",
     )
 
     # ---- Graph View ----
-    with tab_graph:
+    if view == "Graph View":
         st.subheader("Graph Visualization")
         fig = draw_graph(db)
         st.pyplot(fig)
@@ -862,7 +774,7 @@ def render_simulation_section():
                     st.plotly_chart(bar_chart("Relationships by Type", rel_counts, "Type"))
 
     # ---- Create / Update / Delete ----
-    with tab_crud:
+    if view == "Create / Update / Delete":
         st.markdown("#### Add Node")
         with st.form("add_node_form", clear_on_submit=True):
             c1, c2 = st.columns(2)
@@ -921,21 +833,25 @@ def render_simulation_section():
         st.markdown("---")
         st.markdown("#### Update Node Property")
         if db.nodes:
-            options = {db.node_display(nid): nid for nid in db.nodes}
             c1, c2, c3 = st.columns(3)
             with c1:
-                upd_label = st.selectbox("Node", list(options.keys()), key="upd_node")
+                upd_node = node_select("Node", "upd_node", db)
             with c2:
                 upd_key = st.text_input("Property key", key="upd_key")
             with c3:
                 upd_value = st.text_input("New value", key="upd_value")
             if st.button("Update Property"):
-                if upd_key.strip():
-                    db.update_node_property(options[upd_label], upd_key.strip(), upd_value)
-                    set_last_op("UPDATE property", f"Set {upd_key.strip()}={upd_value} on {upd_label}", flash=True)
-                    st.rerun()
-                else:
+                key, value = upd_key.strip(), upd_value.strip()
+                existing = db.find_by_name(value) if key == "name" else None
+                if not key:
                     st.warning("Enter a property key.")
+                elif existing is not None and existing != upd_node:
+                    st.error(f'A node named "{value}" already exists. Use a different name.')
+                else:
+                    before = db.node_display(upd_node)
+                    db.update_node_property(upd_node, key, value)
+                    set_last_op("UPDATE property", f"Set {key}={value} on {before}", flash=True)
+                    st.rerun()
         else:
             st.info("Create a node first.")
 
@@ -944,12 +860,12 @@ def render_simulation_section():
         c1, c2 = st.columns(2)
         with c1:
             if db.nodes:
-                options = {db.node_display(nid): nid for nid in db.nodes}
-                del_node_label = st.selectbox("Node to delete", list(options.keys()), key="del_node")
+                del_node = node_select("Node to delete", "del_node", db)
                 st.caption("Deleting a node also removes its relationships (DETACH DELETE).")
                 if st.button("Delete Node"):
-                    db.delete_node(options[del_node_label])
-                    set_last_op("DELETE node", f"Deleted {del_node_label} and its relationships", flash=True)
+                    label = db.node_display(del_node)
+                    db.delete_node(del_node)
+                    set_last_op("DELETE node", f"Deleted {label} and its relationships", flash=True)
                     st.rerun()
         with c2:
             if db.edges:
@@ -964,56 +880,66 @@ def render_simulation_section():
                     st.rerun()
 
     # ---- Query ----
-    with tab_query:
+    if view == "Query":
         st.markdown("#### Neighbors of a Node")
         if db.nodes:
-            options = {db.node_display(nid): nid for nid in db.nodes}
-            q_node_label = st.selectbox("Select node", list(options.keys()), key="q_neighbor_node")
+            q_node = node_select("Select node", "q_neighbor_node", db)
             if st.button("Find Neighbors"):
-                nbrs = db.neighbors(options[q_node_label])
+                nbrs = db.neighbors(q_node)
+                me = db.node_display(q_node)
                 if nbrs:
                     lines = []
                     for other_id, rel, direction in nbrs:
                         if direction == "out":
-                            lines.append(f"{q_node_label} -[{rel}]-> {db.node_display(other_id)}")
+                            lines.append(f"{me} -[{rel}]-> {db.node_display(other_id)}")
                         else:
-                            lines.append(f"{q_node_label} <-[{rel}]- {db.node_display(other_id)}")
-                    st.code("\n".join(lines))
+                            lines.append(f"{me} <-[{rel}]- {db.node_display(other_id)}")
+                    st.session_state["nbr_result"] = "\n".join(lines)
                     names = ", ".join(db.node_name(o) for o, _, _ in nbrs)
                     result = f"{len(nbrs)} relationship(s): {names}"
                 else:
-                    st.info("No neighbors found.")
+                    st.session_state["nbr_result"] = ""
                     result = "No neighbors found"
-                set_last_op(f"QUERY neighbors of {db.node_name(options[q_node_label])}", result)
+                set_last_op(f"QUERY neighbors of {db.node_name(q_node)}", result)
+            shown = st.session_state.get("nbr_result")
+            if shown is not None:
+                if shown:
+                    st.code(shown)
+                else:
+                    st.info("No neighbors found.")
         else:
             st.info("Create some nodes first.")
 
         st.markdown("---")
         st.markdown("#### Shortest Path Between Two Nodes")
         if len(db.nodes) >= 2:
-            options = {db.node_display(nid): nid for nid in db.nodes}
             c1, c2 = st.columns(2)
             with c1:
-                sp_src_label = st.selectbox("From", list(options.keys()), key="sp_src")
+                sp_src = node_select("From", "sp_src", db)
             with c2:
-                sp_dst_label = st.selectbox("To", list(options.keys()), key="sp_dst")
+                sp_dst = node_select("To", "sp_dst", db)
             if st.button("Find Shortest Path"):
-                src, dst = options[sp_src_label], options[sp_dst_label]
-                path = db.shortest_path(src, dst)
+                path = db.shortest_path(sp_src, sp_dst)
                 if path:
-                    st.success(" -> ".join(db.node_display(n) for n in path))
+                    st.session_state["path_result"] = ("ok", " -> ".join(db.node_display(n) for n in path))
                     result = f"Path ({len(path) - 1} hop(s)): " + " -> ".join(db.node_name(n) for n in path)
                 else:
-                    st.warning("No path exists between the selected nodes.")
+                    st.session_state["path_result"] = ("none", "No path exists between the selected nodes.")
                     result = "No path exists"
-                set_last_op(f"QUERY shortest path {db.node_name(src)} to {db.node_name(dst)}", result)
+                set_last_op(f"QUERY shortest path {db.node_name(sp_src)} to {db.node_name(sp_dst)}", result)
+            shown = st.session_state.get("path_result")
+            if shown:
+                if shown[0] == "ok":
+                    st.success(shown[1])
+                else:
+                    st.warning(shown[1])
         else:
             st.info("Create at least two nodes first.")
 
     # ---- Command Console ----
-    with tab_console:
-        st.markdown("Enter simplified Cypher-style commands. Supported examples:")
-        st.code("\n".join(cfg["console_examples"]), language="cypher")
+    if view == "Command Console":
+        st.markdown("Enter simplified graph query commands. Supported examples:")
+        st.code("\n".join(cfg["console_examples"]), language="text")
         st.caption("Nodes are referenced by their `name` property.")
         command = st.text_input("Command", placeholder='CREATE (:Person {name:"Dave"})', key="console_cmd")
         if st.button("Run Command"):
@@ -1085,7 +1011,7 @@ def render_quiz_section():
 
     with st.form("lab_quiz_form"):
         user_responses = {}
-        for q in QUIZ_QUESTIONS:
+        for q in quiz_questions():
             st.subheader(f"Question {q['id']}")
             st.write(q["question"])
             selected = st.radio(
@@ -1106,7 +1032,7 @@ def render_quiz_section():
 
         st.divider()
         st.subheader("Evaluation Results and Feedback")
-        for q in QUIZ_QUESTIONS:
+        for q in quiz_questions():
             user_ans = user_responses.get(q["id"])
             correct_ans = q["answer_index"]
             if user_ans == correct_ans:
@@ -1122,12 +1048,12 @@ def render_quiz_section():
                          f"**Reasoning:** _{q['explanation']}_")
 
         st.session_state["quiz_score"] = score
-        perc = (score / len(QUIZ_QUESTIONS)) * 100
-        st.info(f"Final Score: **{score} / {len(QUIZ_QUESTIONS)}** ({perc:.0f}%)")
+        perc = (score / len(quiz_questions())) * 100
+        st.info(f"Final Score: **{score} / {len(quiz_questions())}** ({perc:.0f}%)")
 
     elif st.session_state.get("quiz_submitted", False):
         st.success(f"Quiz already submitted. Current score: "
-                   f"**{st.session_state.get('quiz_score', 0)} / {len(QUIZ_QUESTIONS)}**")
+                   f"**{st.session_state.get('quiz_score', 0)} / {len(quiz_questions())}**")
 
 
 def render_report_section():
@@ -1168,9 +1094,13 @@ def render_report_section():
     st.subheader("Report Summary Preview")
     st.write(f"**Experiment:** {FULL_TITLE}")
     st.write(f"**Student(s):** {student_name or 'N/A'} | **Roll No(s):** {roll_nos} | **Date:** {lab_date}")
-    st.write(f"**Quiz Score:** {quiz_score} / {len(QUIZ_QUESTIONS)}" if quiz_submitted
+    st.write(f"**Quiz Score:** {quiz_score} / {len(quiz_questions())}" if quiz_submitted
              else "**Quiz Score:** not attempted yet")
     st.write(f"**Final Graph:** {len(db.nodes)} node(s), {len(db.edges)} relationship(s)")
+
+    fig = draw_graph(db)
+    st.pyplot(fig)
+    plt.close(fig)
 
     if not trials_df.empty:
         st.dataframe(trials_df, hide_index=True)
@@ -1184,20 +1114,18 @@ def render_report_section():
         date_str=str(lab_date),
         trials_df=trials_df,
         quiz_score=quiz_score,
-        quiz_total=len(QUIZ_QUESTIONS),
+        quiz_total=len(quiz_questions()),
         quiz_submitted=quiz_submitted,
         student_notes=student_notes,
         db=db,
     )
 
     st.divider()
-    st.subheader("Download Official Lab Report (.pdf)")
     st.download_button(
-        label="Download lab_report.pdf",
+        "Download Report (PDF)",
         data=pdf_bytes,
         file_name="lab_report.pdf",
         mime="application/pdf",
-        key="stream_pdf_btn",
         type="primary",
     )
 
@@ -1212,6 +1140,7 @@ def init_session_state():
         "console_log": list,
         "trials": list,
         "last_op": lambda: None,
+        "quiz_questions": pick_quiz_questions,
         "quiz_answers": dict,
         "quiz_submitted": lambda: False,
         "quiz_score": lambda: 0,
@@ -1249,7 +1178,7 @@ def main():
     st.sidebar.write(f"- **Graph Size:** {len(db.nodes)} nodes, {len(db.edges)} relationships")
     st.sidebar.write(f"- **Quiz Status:** {quiz_status}")
     if st.session_state.get("quiz_submitted", False):
-        st.sidebar.write(f"- **Quiz Score:** `{st.session_state.get('quiz_score', 0)} / {len(QUIZ_QUESTIONS)}`")
+        st.sidebar.write(f"- **Quiz Score:** `{st.session_state.get('quiz_score', 0)} / {len(quiz_questions())}`")
 
     if section == "Theory":
         render_theory_section()
