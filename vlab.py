@@ -1,32 +1,11 @@
-"""
-Virtual Laboratory Experiment (Streamlit)
-Experiment 8 : Create and Manage a Graph Database
-Roll Nos     : 36, 38, 39, 40
-Aim          : Create nodes and relationships, and perform basic graph operations.
-Outcome      : A functioning graph database containing connected entities.
-
-Sections (as per the lab template):
-  1. Theory            : Aim, objectives, background, procedure, key terms.
-  2. Simulation        : In-memory graph database (nodes, relationships, CRUD, queries, command
-                         console), graph visualisation, metrics, and a trial logger.
-  3. Quiz              : 10 random questions drawn from a 50-question bank (quiz_questions.json),
-                         self-graded with instant feedback.
-  4. Report Generation : Student info, recorded trials, observations, downloadable PDF report
-                         (includes the final graph diagram).
-
-The graph database is simulated in memory with plain Python data structures, so no database
-server is needed.
-
-Run with : streamlit run vlab.py
-Files    : vlab.py and quiz_questions.json (keep both in the same folder)
-Requires : pip install streamlit networkx matplotlib pandas plotly fpdf2
-"""
-
+import html
 import io
 import json
 import os
 import random
 import re
+import textwrap
+import math
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -35,6 +14,7 @@ from typing import Optional
 import matplotlib
 
 matplotlib.use("Agg")
+import matplotlib.patheffects as pe
 import matplotlib.pyplot as plt
 import networkx as nx
 import pandas as pd
@@ -109,9 +89,8 @@ so no database server is needed.
         "Step 6: Update a node property, then delete a node or relationship and observe the graph.",
         "Step 7: In 'Query', find the neighbors of a node and the shortest path between two nodes.",
         "Step 8: In 'Command Console', try graph query commands such as CREATE and MATCH.",
-        "Step 9: Click 'Record Current Trial' after each operation (log at least 4 trials).",
-        "Step 10: Complete the assessment Quiz to test your conceptual understanding.",
-        "Step 11: Open Report Generation, enter your details, and download your PDF report."
+        "Step 9: Complete the assessment Quiz to test your conceptual understanding.",
+        "Step 10: Open Report Generation, enter your details, and download your PDF report."
     ],
     "key_terms": {
         "Node": "An entity in the graph (e.g. a Person or a Company).",
@@ -174,6 +153,12 @@ NODE_COLOR_PALETTE = [
     "#4C72B0", "#DD8452", "#55A868", "#C44E52",
     "#8172B2", "#937860", "#DA8BC3", "#8C8C8C",
 ]
+
+# Graph drawing constants (shared by the interactive Plotly view and the PDF image)
+EDGE_COLOR = "#6b7280"
+EDGE_CURVE = 0.25  # bend used only when two nodes point at each other
+PLOTLY_CONFIG = {"displaylogo": False, "scrollZoom": True,
+                 "modeBarButtonsToRemove": ["select2d", "lasso2d"]}
 
 
 # ======================================================================================
@@ -394,20 +379,13 @@ def run_command(db: GraphDB, command: str) -> str:
 
 
 # ---- Session-level helpers ----
-def set_last_op(operation: str, result: str, flash: bool = False) -> None:
-    """Remembers the most recent operation so it can be logged as a trial."""
-    db: GraphDB = st.session_state["db"]
-    st.session_state["last_op"] = {
-        "operation": operation,
-        "result": result,
-        "nodes": len(db.nodes),
-        "relationships": len(db.edges),
-    }
-    if flash:
-        st.session_state["flash"] = result
-    if not operation.startswith("QUERY"):
-        st.session_state.pop("nbr_result", None)
-        st.session_state.pop("path_result", None)
+def graph_changed(message: Optional[str] = None) -> None:
+    """Call after any change to the graph: shows an optional success message on the next run
+    and clears query results that may now be out of date."""
+    if message:
+        st.session_state["flash"] = message
+    st.session_state.pop("nbr_result", None)
+    st.session_state.pop("path_result", None)
 
 
 def node_select(label: str, key: str, db: GraphDB):
@@ -425,21 +403,210 @@ def load_sample_graph() -> None:
     for src_name, dst_name, rel, props in SIMULATION_CONFIG["sample_edges"]:
         db.add_edge(db.find_by_name(src_name), db.find_by_name(dst_name), rel, props)
     st.session_state["db"] = db
-    st.session_state["console_log"] = ["-- Sample graph loaded --"]
-    set_last_op(
-        "LOAD sample graph",
-        f"Loaded sample graph ({len(db.nodes)} nodes, {len(db.edges)} relationships)",
-        flash=True,
-    )
+    st.session_state["console_output"] = ""
+    graph_changed(f"Loaded sample graph ({len(db.nodes)} nodes, {len(db.edges)} relationships)")
 
 
 def clear_graph() -> None:
     st.session_state["db"] = GraphDB()
-    st.session_state["console_log"] = []
-    set_last_op("CLEAR graph", "Removed all nodes and relationships", flash=True)
+    st.session_state["console_output"] = ""
+    graph_changed("Removed all nodes and relationships")
+
+
+# ======================================================================================
+# 2b. GRAPH DRAWING: SHARED LAYOUT, INTERACTIVE PLOTLY VIEW, STATIC IMAGE FOR THE PDF
+# ======================================================================================
+
+def _ring_positions(nodes: list) -> dict:
+    """Places nodes evenly on a circle (top-first, flat-sided for even counts)."""
+    n = len(nodes)
+    start = math.pi / 2 + (math.pi / n if n % 2 == 0 else 0)
+    return {
+        node: (math.cos(start + 2 * math.pi * i / n), math.sin(start + 2 * math.pi * i / n))
+        for i, node in enumerate(nodes)
+    }
+
+
+def _graph_layout(g: nx.DiGraph) -> dict:
+    """Picks the tidiest layout for the graph size/shape.
+
+    - 1 node           : centred
+    - star (hub+spokes): hub in the middle, the rest on a ring
+    - up to 16 nodes   : ring, ordered by traversal so linked nodes sit next to each other
+    - larger graphs    : spring layout with extra spacing
+    """
+    n = len(g)
+    if n == 1:
+        return {node: (0.0, 0.0) for node in g}
+
+    und = nx.Graph(g)
+    und.remove_edges_from(list(nx.selfloop_edges(und)))
+
+    hub, hub_degree = max(und.degree, key=lambda item: item[1])
+    if n >= 4 and hub_degree == n - 1 and und.number_of_edges() == n - 1:
+        pos = {hub: (0.0, 0.0)}
+        pos.update(_ring_positions([node for node in und.nodes if node != hub]))
+        return pos
+
+    if n <= 16:
+        order, seen = [], set()
+        for start in und.nodes:
+            if start not in seen:
+                for node in nx.dfs_preorder_nodes(und, start):
+                    seen.add(node)
+                    order.append(node)
+        return _ring_positions(order)
+
+    # Tie separate pieces together with invisible links so they don't drift far apart
+    tied = und.copy()
+    parts = [next(iter(c)) for c in nx.connected_components(und)]
+    tied.add_edges_from(zip(parts, parts[1:]))
+    raw = nx.spring_layout(tied, seed=42, k=1.5 / math.sqrt(n), iterations=300)
+    return {node: (float(p[0]), float(p[1])) for node, p in raw.items()}
+
+
+def _props_text(props: dict) -> str:
+    return ", ".join(f"{k}={v}" for k, v in props.items())
+
+
+def _node_hover(db: GraphDB, node_id: int) -> str:
+    """HTML shown when hovering over a node."""
+    lines = [
+        f"<b>{html.escape(db.node_name(node_id))}</b>",
+        f"Label: {html.escape(db.label_of(node_id))}",
+        f"ID: {node_id}",
+    ]
+    for key, value in db.nodes[node_id]["properties"].items():
+        if key != "name":
+            lines.append(f"{html.escape(str(key))}: {html.escape(str(value))}")
+    out_count = sum(1 for e in db.edges if e["src"] == node_id)
+    in_count = sum(1 for e in db.edges if e["dst"] == node_id)
+    lines.append(f"Relationships: {out_count} out, {in_count} in")
+    return "<br>".join(lines)
+
+
+def build_graph_figure(db: GraphDB) -> go.Figure:
+    """Interactive Plotly view: hover for details, scroll to zoom, drag to pan."""
+    fig = go.Figure()
+    fig.update_layout(
+        template="plotly_white", paper_bgcolor="white", plot_bgcolor="white",
+        margin=dict(l=10, r=10, t=10, b=50), dragmode="pan",
+        hoverlabel=dict(bgcolor="white", bordercolor="#d1d5db", font=dict(color="#111827", size=12)),
+    )
+    fig.update_xaxes(visible=False)
+    fig.update_yaxes(visible=False)
+
+    if not db.nodes:
+        fig.add_annotation(text="Graph is empty.<br>Add nodes to get started.",
+                           xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False,
+                           font=dict(size=16, color="#6b7280"))
+        fig.update_layout(height=320)
+        return fig
+
+    g = db.to_networkx()
+    pos = _graph_layout(g)
+    n = len(db.nodes)
+    marker_px = 34 if n <= 8 else 26 if n <= 16 else 18
+    name_font = 12 if n <= 8 else 11 if n <= 16 else 9
+    chip_font = 11 if n <= 16 else 9
+    arrow_tail_px = marker_px / 2 + 26
+
+    # Group relationships by (from, to) so several between the same pair share one arrow
+    groups = {}
+    for e in db.edges:
+        groups.setdefault((e["src"], e["dst"]), []).append(e)
+
+    line_x, line_y = [], []
+    hover_x, hover_y, hover_text = [], [], []
+    for (u, v), rels in groups.items():
+        (x1, y1), (x2, y2) = pos[u], pos[v]
+        tangent = None
+        if u == v:  # self-relationship: a small loop above the node
+            r = 0.2
+            angles = [math.radians(-60 + 300 * i / 40) for i in range(41)]
+            pts = [(x1 + r * math.cos(a), y1 + r + r * math.sin(a)) for a in angles]
+            label_x, label_y = x1, y1 + 2 * r + 0.1
+        elif (v, u) in groups:  # two-way pair: bend each arrow to its own side
+            mx, my = (x1 + x2) / 2, (y1 + y2) / 2
+            cx, cy = mx + EDGE_CURVE * (y2 - y1), my - EDGE_CURVE * (x2 - x1)
+            steps = [i / 24 for i in range(25)]
+            pts = [((1 - t) ** 2 * x1 + 2 * (1 - t) * t * cx + t ** 2 * x2,
+                    (1 - t) ** 2 * y1 + 2 * (1 - t) * t * cy + t ** 2 * y2) for t in steps]
+            label_x = 0.25 * x1 + 0.5 * cx + 0.25 * x2
+            label_y = 0.25 * y1 + 0.5 * cy + 0.25 * y2
+            tangent = (x2 - cx, y2 - cy)
+        else:
+            pts = [(x1, y1), (x2, y2)]
+            label_x, label_y = (x1 + x2) / 2, (y1 + y2) / 2
+            tangent = (x2 - x1, y2 - y1)
+
+        line_x += [p[0] for p in pts] + [None]
+        line_y += [p[1] for p in pts] + [None]
+
+        # Arrowhead just outside the target node (offsets are in pixels, so it survives zooming)
+        if tangent and math.hypot(*tangent) > 0:
+            tx, ty = tangent[0] / math.hypot(*tangent), tangent[1] / math.hypot(*tangent)
+            fig.add_annotation(
+                x=x2, y=y2, xref="x", yref="y", ax=-tx * arrow_tail_px, ay=ty * arrow_tail_px,
+                axref="pixel", ayref="pixel", showarrow=True, text="", arrowhead=2,
+                arrowsize=1.3, arrowwidth=2, arrowcolor=EDGE_COLOR, standoff=marker_px / 2 + 2,
+            )
+
+        # Relationship label as a small chip on the edge
+        chip_text = ", ".join(dict.fromkeys(r["type"] for r in rels))
+        fig.add_annotation(
+            x=label_x, y=label_y, xref="x", yref="y", text=html.escape(chip_text), showarrow=False,
+            font=dict(size=chip_font, color="#374151"), bgcolor="white", bordercolor="#d1d5db",
+            borderwidth=1, borderpad=3,
+        )
+
+        detail = "<br>".join(
+            f"<b>{html.escape(r['type'])}</b>"
+            + (f"  {html.escape(_props_text(r['properties']))}" if r["properties"] else "")
+            for r in rels
+        )
+        hover_x.append(label_x)
+        hover_y.append(label_y)
+        hover_text.append(f"{html.escape(db.node_name(u))} \u2192 {html.escape(db.node_name(v))}<br>{detail}")
+
+    fig.add_trace(go.Scatter(
+        x=line_x, y=line_y, mode="lines", line=dict(width=2, color=EDGE_COLOR),
+        hoverinfo="skip", showlegend=False,
+    ))
+    fig.add_trace(go.Scatter(  # invisible hover targets on each relationship
+        x=hover_x, y=hover_y, mode="markers", marker=dict(size=18, color="rgba(0,0,0,0)"),
+        hovertext=hover_text, hoverinfo="text", showlegend=False,
+    ))
+
+    # One trace per node label, so the legend doubles as a colour key
+    labels_in_order = list(dict.fromkeys(db.label_of(nid) for nid in db.nodes))
+    for i, label in enumerate(labels_in_order):
+        ids = [nid for nid in db.nodes if db.label_of(nid) == label]
+        fig.add_trace(go.Scatter(
+            x=[pos[nid][0] for nid in ids], y=[pos[nid][1] for nid in ids],
+            mode="markers+text", name=label,
+            text=[f"<b>{html.escape(textwrap.fill(db.node_name(nid), 14)).replace(chr(10), '<br>')}</b>"
+                  for nid in ids],
+            textposition="bottom center", textfont=dict(size=name_font, color="#111827"),
+            marker=dict(size=marker_px, color=NODE_COLOR_PALETTE[i % len(NODE_COLOR_PALETTE)],
+                        line=dict(color="white", width=2)),
+            hovertext=[_node_hover(db, nid) for nid in ids], hoverinfo="text",
+        ))
+
+    # Equal spacing on both axes so circles stay round; extra room below for names
+    xs, ys = [p[0] for p in pos.values()], [p[1] for p in pos.values()]
+    fig.update_xaxes(range=[min(xs) - 0.6, max(xs) + 0.6])
+    fig.update_yaxes(range=[min(ys) - 0.7, max(ys) + 0.6], scaleanchor="x", scaleratio=1)
+    fig.update_layout(
+        height=560 if n <= 16 else 700,
+        legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.02, yanchor="top",
+                    itemclick=False, itemdoubleclick=False),
+    )
+    return fig
 
 
 def draw_graph(db: GraphDB):
+    """Static matplotlib version of the graph. Used for the PDF report image."""
     g = db.to_networkx()
     fig, ax = plt.subplots(figsize=(7, 5))
     if len(g.nodes) == 0:
@@ -448,28 +615,89 @@ def draw_graph(db: GraphDB):
         ax.axis("off")
         return fig
 
-    pos = nx.spring_layout(g, seed=42, k=0.9)
-    label_colors = {}
-    node_colors = []
-    for n in g.nodes:
-        lbl = g.nodes[n]["label"]
+    n = len(g)
+    node_size = 900 if n <= 8 else 600 if n <= 16 else 400
+    font_size = 9 if n <= 8 else 7.5 if n <= 16 else 6.5
+    radius_pt = math.sqrt(node_size) / 2
+    pos = _graph_layout(g)
+
+    # Node colours (one per label)
+    label_colors, node_colors = {}, []
+    for node in g.nodes:
+        lbl = g.nodes[node]["label"]
         if lbl not in label_colors:
             label_colors[lbl] = NODE_COLOR_PALETTE[len(label_colors) % len(NODE_COLOR_PALETTE)]
         node_colors.append(label_colors[lbl])
 
-    nx.draw_networkx_nodes(g, pos, node_size=1400, node_color=node_colors, ax=ax, alpha=0.9)
-    nx.draw_networkx_labels(g, pos, labels={n: g.nodes[n]["name"] for n in g.nodes},
-                            font_size=9, font_color="white", ax=ax)
-    nx.draw_networkx_edges(g, pos, ax=ax, arrows=True, arrowsize=18,
-                           connectionstyle="arc3,rad=0.08", edge_color="#555555")
-    edge_labels = {(u, v): d["type"] for u, v, d in g.edges(data=True)}
-    nx.draw_networkx_edge_labels(g, pos, edge_labels=edge_labels, font_size=8, ax=ax)
+    # Edges: straight by default, gently curved only when two nodes point at each other
+    curved = [(u, v) for u, v in g.edges if u != v and g.has_edge(v, u)]
+    loops = [(u, v) for u, v in g.edges if u == v]
+    straight = [(u, v) for u, v in g.edges if u != v and not g.has_edge(v, u)]
+    edge_style = dict(ax=ax, arrows=True, arrowstyle="-|>", arrowsize=16, width=1.4,
+                      edge_color=EDGE_COLOR, node_size=node_size)
+    if straight:
+        nx.draw_networkx_edges(g, pos, edgelist=straight, **edge_style)
+    if curved:
+        nx.draw_networkx_edges(g, pos, edgelist=curved,
+                               connectionstyle=f"arc3,rad={EDGE_CURVE}", **edge_style)
+    if loops:
+        nx.draw_networkx_edges(g, pos, edgelist=loops, **edge_style)
 
+    # Nodes on top of the edges
+    nodes = nx.draw_networkx_nodes(g, pos, node_size=node_size, node_color=node_colors,
+                                   edgecolors="white", linewidths=2, ax=ax)
+    nodes.set_zorder(3)
+
+    # Node names sit just below each node, with a white outline so they stay readable
+    for node in g.nodes:
+        x, y = pos[node]
+        ax.annotate(
+            textwrap.fill(g.nodes[node]["name"], 14), (x, y),
+            xytext=(0, -(radius_pt + 4)), textcoords="offset points",
+            ha="center", va="top", fontsize=font_size, fontweight="bold", color="#111827",
+            path_effects=[pe.withStroke(linewidth=3, foreground="white")], zorder=5,
+        )
+
+    # Relationship labels as small chips on the middle of each edge
+    curved_set = set(curved)
+    chip = dict(boxstyle="round,pad=0.2", fc="white", ec="#d1d5db", lw=0.6)
+    for u, v, data in g.edges(data=True):
+        (x1, y1), (x2, y2) = pos[u], pos[v]
+        if u == v:
+            ax.annotate(data["type"], (x1, y1), xytext=(0, radius_pt + 24), textcoords="offset points",
+                        ha="center", va="center", fontsize=7.5, color="#374151", bbox=chip, zorder=4)
+            continue
+        lx, ly = (x1 + x2) / 2, (y1 + y2) / 2
+        if (u, v) in curved_set:  # follow the bend of the arc
+            lx += 0.5 * EDGE_CURVE * (y2 - y1)
+            ly -= 0.5 * EDGE_CURVE * (x2 - x1)
+        ax.text(lx, ly, data["type"], ha="center", va="center", fontsize=7.5,
+                color="#374151", bbox=chip, zorder=4)
+
+    # Even spacing on both axes, with room below the nodes for their names
+    legend_rows = math.ceil(len(label_colors) / 4)
+    bottom = 0.06 + 0.06 * legend_rows
+    box_w, box_h = 7 * 0.96, 5 * (0.98 - bottom)
+    xs, ys = [p[0] for p in pos.values()], [p[1] for p in pos.values()]
+    x0, x1 = min(xs) - 0.5, max(xs) + 0.5
+    y0, y1 = min(ys) - 0.7, max(ys) + 0.4
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    half_w, half_h = (x1 - x0) / 2, (y1 - y0) / 2
+    if half_w / half_h < box_w / box_h:   # widen or heighten the view to fill the plot area
+        half_w = half_h * box_w / box_h
+    else:
+        half_h = half_w * box_h / box_w
+    ax.set_xlim(cx - half_w, cx + half_w)
+    ax.set_ylim(cy - half_h, cy + half_h)
+    ax.set_aspect("equal", adjustable="box")
+    ax.axis("off")
+
+    # Legend under the graph
     handles = [plt.Line2D([0], [0], marker="o", color="w", markerfacecolor=c, markersize=10, label=lbl)
                for lbl, c in label_colors.items()]
-    ax.legend(handles=handles, loc="upper left", fontsize=8, title="Node labels")
-    ax.axis("off")
-    fig.tight_layout()
+    fig.legend(handles=handles, loc="lower center", ncol=min(len(handles), 4), fontsize=8,
+               frameon=False, title="Node labels", title_fontsize=8)
+    fig.subplots_adjust(left=0.02, right=0.98, top=0.98, bottom=bottom)
     return fig
 
 
@@ -544,7 +772,7 @@ def _pdf_heading(pdf, text):
 
 
 def generate_pdf_report(student_name: str, roll_nos: str, date_str: str,
-                        trials_df: pd.DataFrame, quiz_score: int, quiz_total: int,
+                        quiz_score: int, quiz_total: int,
                         quiz_submitted: bool, student_notes: str, db: GraphDB) -> bytes:
     """Compiles the experiment record into a formatted PDF report."""
     pdf = LabReportPDF()
@@ -588,37 +816,8 @@ def generate_pdf_report(student_name: str, roll_nos: str, date_str: str,
         pdf.multi_cell(0, 5, _pdf_safe(f"- {obj}"), new_x="LMARGIN", new_y="NEXT")
     pdf.ln(3)
 
-    # 3. Recorded trials
-    _pdf_heading(pdf, "3. Recorded Experimental Trials & Data")
-    if trials_df.empty:
-        pdf.set_font("Helvetica", "I", 9)
-        pdf.set_text_color(100, 116, 139)
-        pdf.cell(0, 6, "No simulation trials recorded during this session.", new_x="LMARGIN", new_y="NEXT")
-    else:
-        columns = [("Trial #", "Trial", 14), ("Operation", "Operation", 46), ("Nodes", "Nodes", 14),
-                   ("Relationships", "Rels", 16), ("Result", "Result", 80), ("Timestamp", "Time", 20)]
-        pdf.set_fill_color(37, 99, 235)
-        pdf.set_text_color(255, 255, 255)
-        pdf.set_font("Helvetica", "B", 8)
-        for _, short, width in columns:
-            pdf.cell(width, 6, short, border=1, align="C", fill=True)
-        pdf.ln()
-
-        pdf.set_fill_color(248, 250, 252)
-        pdf.set_text_color(30, 41, 59)
-        pdf.set_font("Helvetica", "", 8)
-        fill = False
-        for _, row in trials_df.iterrows():
-            for key, _, width in columns:
-                pdf.cell(width, 5, _trunc(row.get(key, ""), width), border=1, align="C", fill=fill)
-            pdf.ln()
-            fill = not fill
-    pdf.set_font("Helvetica", "", 9)
-    pdf.set_text_color(51, 65, 85)
-    pdf.ln(4)
-
-    # 4. Final graph state
-    _pdf_heading(pdf, "4. Final Graph State")
+    # 3. Final graph state
+    _pdf_heading(pdf, "3. Final Graph State")
     pdf.cell(0, 5, f"Nodes: {len(db.nodes)}    Relationships: {len(db.edges)}",
              new_x="LMARGIN", new_y="NEXT")
     pdf.ln(1)
@@ -643,10 +842,10 @@ def generate_pdf_report(student_name: str, roll_nos: str, date_str: str,
         pdf.cell(0, 5, f"... and {len(db.edges) - 30} more relationship(s)", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(4)
 
-    # 5. Observations
-    _pdf_heading(pdf, "5. Observations & Analysis")
+    # 4. Observations
+    _pdf_heading(pdf, "4. Observations & Analysis")
     notes_text = student_notes.strip() if student_notes.strip() else (
-        "The experimental trials demonstrated the creation and management of a graph database "
+        "The experiment demonstrated the creation and management of a graph database "
         "of connected entities, matching the expected outcome."
     )
     pdf.multi_cell(0, 5, _pdf_safe(notes_text), new_x="LMARGIN", new_y="NEXT")
@@ -698,15 +897,16 @@ def render_theory_section():
         st.markdown(
             "- NetworkX Documentation: https://networkx.org/documentation/stable/\n"
             "- Streamlit Documentation: https://docs.streamlit.io/\n"
+            "- Plotly Python Documentation: https://plotly.com/python/\n"
             "- Angles, R., & Gutierrez, C. (2008). Survey of graph database models. "
             "*ACM Computing Surveys*, 40(1)."
         )
 
 
 def render_simulation_section():
-    """Renders Section 2: interactive graph database sandbox and trial logger."""
+    """Renders Section 2: interactive graph database sandbox."""
     st.header("Interactive Simulation Sandbox")
-    st.info("Create nodes and relationships, run queries, then log each operation as a trial.")
+    st.info("Create nodes and relationships, and run queries to explore the graph.")
 
     cfg = SIMULATION_CONFIG
     db: GraphDB = st.session_state["db"]
@@ -734,8 +934,6 @@ def render_simulation_section():
     with m3:
         st.metric("Distinct Labels", len(labels_present))
 
-    last_op_slot = st.empty()
-
     view = st.radio(
         "Simulation view",
         ["Graph View", "Create / Update / Delete", "Query", "Command Console"],
@@ -745,9 +943,9 @@ def render_simulation_section():
     # ---- Graph View ----
     if view == "Graph View":
         st.subheader("Graph Visualization")
-        fig = draw_graph(db)
-        st.pyplot(fig)
-        plt.close(fig)
+        if db.nodes:
+            st.caption("Hover over a node or relationship for details. Scroll to zoom, drag to pan.")
+        st.plotly_chart(build_graph_figure(db), theme=None, config=PLOTLY_CONFIG)
 
         if db.nodes:
             t1, t2 = st.columns(2)
@@ -797,7 +995,7 @@ def render_simulation_section():
                             k, v = pair.split("=", 1)
                             props[k.strip()] = v.strip()
                     node_id = db.add_node(new_label.strip() or "Node", props)
-                    set_last_op("CREATE node", f"Created node {db.node_display(node_id)}", flash=True)
+                    graph_changed(f"Created node {db.node_display(node_id)}")
                     st.rerun()
 
         st.markdown("---")
@@ -826,8 +1024,7 @@ def render_simulation_section():
                             k, v = pair.split("=", 1)
                             rel_props[k.strip()] = v.strip()
                     db.add_edge(options[src_label], options[dst_label], rel, rel_props)
-                    set_last_op("CREATE relationship", f"Created relationship: {src_label} -[{rel}]-> {dst_label}",
-                                flash=True)
+                    graph_changed(f"Created relationship: {src_label} -[{rel}]-> {dst_label}")
                     st.rerun()
 
         st.markdown("---")
@@ -850,7 +1047,7 @@ def render_simulation_section():
                 else:
                     before = db.node_display(upd_node)
                     db.update_node_property(upd_node, key, value)
-                    set_last_op("UPDATE property", f"Set {key}={value} on {before}", flash=True)
+                    graph_changed(f"Set {key}={value} on {before}")
                     st.rerun()
         else:
             st.info("Create a node first.")
@@ -865,7 +1062,7 @@ def render_simulation_section():
                 if st.button("Delete Node"):
                     label = db.node_display(del_node)
                     db.delete_node(del_node)
-                    set_last_op("DELETE node", f"Deleted {label} and its relationships", flash=True)
+                    graph_changed(f"Deleted {label} and its relationships")
                     st.rerun()
         with c2:
             if db.edges:
@@ -876,7 +1073,7 @@ def render_simulation_section():
                 del_edge_label = st.selectbox("Relationship to delete", list(edge_options.keys()), key="del_edge")
                 if st.button("Delete Relationship"):
                     db.delete_edge(edge_options[del_edge_label])
-                    set_last_op("DELETE relationship", f"Deleted relationship {del_edge_label}", flash=True)
+                    graph_changed(f"Deleted relationship {del_edge_label}")
                     st.rerun()
 
     # ---- Query ----
@@ -895,12 +1092,8 @@ def render_simulation_section():
                         else:
                             lines.append(f"{me} <-[{rel}]- {db.node_display(other_id)}")
                     st.session_state["nbr_result"] = "\n".join(lines)
-                    names = ", ".join(db.node_name(o) for o, _, _ in nbrs)
-                    result = f"{len(nbrs)} relationship(s): {names}"
                 else:
                     st.session_state["nbr_result"] = ""
-                    result = "No neighbors found"
-                set_last_op(f"QUERY neighbors of {db.node_name(q_node)}", result)
             shown = st.session_state.get("nbr_result")
             if shown is not None:
                 if shown:
@@ -922,11 +1115,8 @@ def render_simulation_section():
                 path = db.shortest_path(sp_src, sp_dst)
                 if path:
                     st.session_state["path_result"] = ("ok", " -> ".join(db.node_display(n) for n in path))
-                    result = f"Path ({len(path) - 1} hop(s)): " + " -> ".join(db.node_name(n) for n in path)
                 else:
                     st.session_state["path_result"] = ("none", "No path exists between the selected nodes.")
-                    result = "No path exists"
-                set_last_op(f"QUERY shortest path {db.node_name(sp_src)} to {db.node_name(sp_dst)}", result)
             shown = st.session_state.get("path_result")
             if shown:
                 if shown[0] == "ok":
@@ -945,63 +1135,14 @@ def render_simulation_section():
         if st.button("Run Command"):
             if command.strip():
                 output = run_command(db, command)
-                st.session_state["console_log"].append(f"> {command}")
-                st.session_state["console_log"].append(output)
-                set_last_op(f"CONSOLE {command.strip()[:40]}", output.splitlines()[0])
+                st.session_state["console_output"] = f"> {command}\n{output}"
+                graph_changed()
                 st.rerun()
             else:
                 st.warning("Enter a command first.")
 
-        st.markdown("##### Console Log")
-        log = st.session_state["console_log"]
-        st.code("\n".join(log) if log else "(empty)")
-
-    # ---- Data Logger ----
-    st.divider()
-    st.subheader("Experimental Data Log Book")
-    col_log1, col_log2 = st.columns([1.5, 3.5])
-
-    with col_log1:
-        st.caption("Capture the last operation and the current graph size into your trial table:")
-        if st.button("Record Current Trial", type="primary"):
-            op = st.session_state["last_op"]
-            if op is None:
-                st.warning("Perform an operation first, then record it.")
-            else:
-                trial_record = {
-                    "Trial #": len(st.session_state["trials"]) + 1,
-                    "Operation": op["operation"],
-                    "Nodes": op["nodes"],
-                    "Relationships": op["relationships"],
-                    "Result": op["result"],
-                    "Timestamp": datetime.now().strftime("%H:%M:%S"),
-                }
-                st.session_state["trials"].append(trial_record)
-                st.toast(f"Trial #{trial_record['Trial #']} successfully saved!")
-
-        if st.button("Clear Logged Trials"):
-            st.session_state["trials"] = []
-            st.toast("Trial log cleared.")
-
-    with col_log2:
-        if st.session_state["trials"]:
-            df_trials = pd.DataFrame(st.session_state["trials"])
-            st.dataframe(df_trials, hide_index=True)
-            st.download_button(
-                "Download Trials as CSV",
-                data=df_trials.to_csv(index=False).encode("utf-8"),
-                file_name="experiment_trials.csv",
-                mime="text/csv",
-            )
-        else:
-            st.info("No trials recorded yet. Perform an operation, then click 'Record Current Trial'.")
-
-    # Filled last so it always shows the latest operation
-    op = st.session_state["last_op"]
-    if op:
-        last_op_slot.info(f"**Last operation:** {op['operation']}  \n{op['result']}")
-    else:
-        last_op_slot.caption("No operation performed yet.")
+        st.markdown("##### Output")
+        st.code(st.session_state["console_output"] or "(empty)")
 
 
 def render_quiz_section():
@@ -1059,7 +1200,7 @@ def render_quiz_section():
 def render_report_section():
     """Renders Section 4: lab report generator with PDF export."""
     st.header("Report Generation")
-    st.write("Compile your details, recorded trials, and quiz evaluation into a PDF report.")
+    st.write("Compile your details, final graph, and quiz evaluation into a PDF report.")
 
     info = st.session_state["student_info"]
     col1, col2, col3 = st.columns(3)
@@ -1086,7 +1227,6 @@ def render_report_section():
     st.session_state["student_notes"] = student_notes
 
     db: GraphDB = st.session_state["db"]
-    trials_df = pd.DataFrame(st.session_state["trials"]) if st.session_state["trials"] else pd.DataFrame()
     quiz_submitted = st.session_state.get("quiz_submitted", False)
     quiz_score = st.session_state.get("quiz_score", 0)
 
@@ -1098,21 +1238,12 @@ def render_report_section():
              else "**Quiz Score:** not attempted yet")
     st.write(f"**Final Graph:** {len(db.nodes)} node(s), {len(db.edges)} relationship(s)")
 
-    fig = draw_graph(db)
-    st.pyplot(fig)
-    plt.close(fig)
-
-    if not trials_df.empty:
-        st.dataframe(trials_df, hide_index=True)
-    else:
-        st.info("Note: You have not recorded any trials in the Simulation tab yet. "
-                "Your report will indicate 0 trials.")
+    st.plotly_chart(build_graph_figure(db), theme=None, config=PLOTLY_CONFIG)
 
     pdf_bytes = generate_pdf_report(
         student_name=student_name,
         roll_nos=roll_nos,
         date_str=str(lab_date),
-        trials_df=trials_df,
         quiz_score=quiz_score,
         quiz_total=len(quiz_questions()),
         quiz_submitted=quiz_submitted,
@@ -1137,9 +1268,7 @@ def init_session_state():
     """Initializes Streamlit session state variables."""
     defaults = {
         "db": GraphDB,
-        "console_log": list,
-        "trials": list,
-        "last_op": lambda: None,
+        "console_output": lambda: "",
         "quiz_questions": pick_quiz_questions,
         "quiz_answers": dict,
         "quiz_submitted": lambda: False,
@@ -1174,7 +1303,6 @@ def main():
     st.sidebar.subheader("Progress Tracker")
     db: GraphDB = st.session_state["db"]
     quiz_status = "Done" if st.session_state.get("quiz_submitted", False) else "Pending"
-    st.sidebar.write(f"- **Trials Logged:** {len(st.session_state['trials'])}")
     st.sidebar.write(f"- **Graph Size:** {len(db.nodes)} nodes, {len(db.edges)} relationships")
     st.sidebar.write(f"- **Quiz Status:** {quiz_status}")
     if st.session_state.get("quiz_submitted", False):
