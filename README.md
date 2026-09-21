@@ -4,6 +4,9 @@
 
 **Roll Nos:** 36, 38, 39, 40
 
+Part of the **KGIRS Virtual Lab**. Sections follow the sequence required for all experiments:
+Purpose → Theory → Simulation → Quiz → Report Generation → Certificate → References.
+
 ---
 
 ## Experiment Details
@@ -20,37 +23,39 @@
 
 ## Features
 
-### Theory
-- Aim, expected outcome, and graph vs relational comparison
+### 1. Purpose
+- Aim and expected outcome
+- Learning objectives (5 goals)
+
+### 2. Theory
+- Graph vs relational database comparison
 - Querying patterns (ASCII-style node/relationship notation)
 - Workflow & system overview
-- Learning objectives (5 goals)
-- 10-step experimental procedure
+- 11-step experimental procedure
 - Key terminology table
-- References
 
-### Simulation
+### 3. Simulation
 - **Metrics**: live counts of nodes, relationships, and distinct labels
 - **Graph View**: interactive Plotly graph (hover for details, scroll to zoom, drag to pan), nodes and relationships tables, and bar charts of nodes by label and relationships by type
 - **Create / Update / Delete**:
   - Add nodes with a label and properties (including extra `key=value` pairs)
   - Add typed, directed relationships with optional properties
   - Update any property on an existing node
-  - Delete nodes (with their relationships — DETACH DELETE) or individual relationships
+  - Delete nodes (with their relationships, i.e. DETACH DELETE) or individual relationships
 - **Query**: neighbors of a node and shortest path between two nodes
-- **Command Console**: simplified Cypher-style commands (`CREATE`, `MATCH ... RETURN`, `MATCH ... DETACH DELETE`)
+- **Command Console**: simplified Cypher-style commands (`CREATE`, `MATCH ... RETURN`, `MATCH ... DETACH DELETE`) with the output of the latest command
 - **Load Sample Graph / Clear Graph**
 - Smart graph layout: centered single node, hub-and-spoke for stars, ring layout for small graphs, spring layout for larger graphs
 
-### Quiz
+### 4. Quiz
 - 10 random questions drawn from a 50-question bank (`quiz_questions.json`)
 - Self-graded with instant feedback, correct answers, and explanations for each question
 - Session-persistent score
 
-### Report Generation
+### 5. Report Generation
 - Enter student names, roll numbers, and experiment date
 - Add discussion/observations
-- Live preview of graph, quiz score, and summary
+- Live preview of the graph, quiz score, and summary
 - Download a formatted PDF containing:
   - Aim & expected outcome
   - Learning objectives
@@ -58,6 +63,18 @@
   - Relationship list
   - Quiz evaluation
   - Observations & signature line
+
+### 6. Certificate
+- Confirm student names, roll numbers, and date (shared with Report Generation, so they only need to be entered once)
+- Unlocks after the quiz is submitted (configurable, see [Configuration](#configuration))
+- Download a landscape A4 PDF certificate of completion containing:
+  - Student name(s) and roll number(s)
+  - Experiment title
+  - Quiz score
+  - Date and instructor signature line
+
+### 7. References
+- Numbered list of the sources used for this experiment
 
 ### Sidebar Progress Tracker
 - Graph size (nodes, relationships)
@@ -115,26 +132,43 @@ This opens the app in your browser (typically `http://localhost:8501`). Use the 
 
 ---
 
+## Configuration
+
+Settings at the top of `vlab.py`:
+
+| Setting | Purpose |
+|---|---|
+| `LAB_NAME` | Lab name shown under the title and on the certificate (`"KGIRS Virtual Lab"`) |
+| `SECTIONS` | Order of the sidebar sections (Purpose to References) |
+| `CERTIFICATE_REQUIRES_QUIZ` | `True` unlocks the certificate only after the quiz is submitted; `False` lets students download it any time |
+| `REFERENCES` | List of sources shown in the References section |
+| `EXPERIMENT_CONFIG` | Experiment number, title, roll numbers, aim, expected outcome and objectives |
+
+---
+
 ## How to Use the Simulator
 
-1. Open **Simulation** from the sidebar.
-2. Click **Load Sample Graph** for a small demo (or start empty).
-3. In **Create / Update / Delete**:
+1. Read the **Purpose** and **Theory** sections.
+2. Open **Simulation** from the sidebar.
+3. Click **Load Sample Graph** for a small demo (or start empty).
+4. In **Create / Update / Delete**:
    - Add a node with a label (e.g. `Person`, `Company`) and properties
    - Connect two nodes with a directed, typed relationship
    - Update a property on an existing node
    - Delete a node or a relationship
-4. Check **Graph View**, which updates after every operation.
-5. Use **Query** for a node's neighbors or the shortest path between two nodes.
-6. Try the **Command Console**:
-   ```
+5. Check **Graph View**, which updates after every operation. Hover over nodes and relationships for details.
+6. Use **Query** for a node's neighbors or the shortest path between two nodes.
+7. Try the **Command Console**:
+```
    CREATE (:Person {name:"Dave"})
    CREATE (Dave)-[:FRIENDS_WITH]->(Alice)
    MATCH (n:Person) RETURN n
    MATCH (a)-[r:FRIENDS_WITH]->(b) RETURN a, r, b
    MATCH (n {name:"Dave"}) DETACH DELETE n
-   ```
-7. Complete the **Quiz**, then open **Report Generation**, enter your details and download the PDF.
+```
+8. Complete the **Quiz**.
+9. Open **Report Generation**, enter your details and download the PDF report.
+10. Open **Certificate** and download your certificate of completion.
 
 ---
 
@@ -155,10 +189,16 @@ This opens the app in your browser (typically `http://localhost:8501`). Use the 
 
 | Section | Key Components |
 |---|---|
-| **Theory** | `render_theory_section()`, `THEORY_CONTENT`, `EXPERIMENT_CONFIG` |
-| **Simulation** | `GraphDB` (in-memory engine), `run_command()` (parser), `build_graph_figure()` (Plotly), `draw_graph()` (Matplotlib for PDF) |
+| **Purpose** | `render_purpose_section()`, `EXPERIMENT_CONFIG` |
+| **Theory** | `render_theory_section()`, `THEORY_CONTENT` |
+| **Simulation** | `GraphDB` (in-memory engine), `run_command()` (parser), `build_graph_figure()` (interactive Plotly view), `draw_graph()` (Matplotlib image for the PDF) |
 | **Quiz** | `load_quiz_bank()`, `pick_quiz_questions()`, `render_quiz_section()` |
 | **Report** | `generate_pdf_report()`, `LabReportPDF`, `graph_png_bytes()` |
+| **Certificate** | `render_certificate_section()`, `generate_certificate_pdf()`, `CERTIFICATE_REQUIRES_QUIZ` |
+| **References** | `render_references_section()`, `REFERENCES` |
+| **Navigation** | `SECTIONS`, `SECTION_RENDERERS`, `main()` |
+
+The graph layout (`_graph_layout()`) is shared by the Plotly view and the PDF image, so both show the same arrangement.
 
 ### GraphDB Data Model
 

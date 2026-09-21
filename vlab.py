@@ -1,3 +1,30 @@
+"""
+Virtual Laboratory Experiment (Streamlit)
+Experiment 8 : Create and Manage a Graph Database
+Roll Nos     : 36, 38, 39, 40
+Aim          : Create nodes and relationships, and perform basic graph operations.
+Outcome      : A functioning graph database containing connected entities.
+
+Sections (in the sequence required for all Virtual Lab experiments):
+  1. Purpose            : Aim, expected outcome, learning objectives.
+  2. Theory             : Background, experimental procedure, key terms.
+  3. Simulation         : In-memory graph database (nodes, relationships, CRUD, queries, command
+                          console), interactive Plotly graph visualisation and metrics.
+  4. Quiz               : 10 random questions drawn from a 50-question bank (quiz_questions.json),
+                          self-graded with instant feedback.
+  5. Report Generation  : Student info, observations, downloadable PDF report
+                          (includes the final graph diagram).
+  6. Certificate        : Downloadable certificate of completion (PDF).
+  7. References         : Sources used for this experiment.
+
+The graph database is simulated in memory with plain Python data structures, so no database
+server is needed.
+
+Run with : streamlit run vlab.py
+Files    : vlab.py and quiz_questions.json (keep both in the same folder)
+Requires : pip install streamlit networkx matplotlib pandas plotly fpdf2
+"""
+
 import html
 import io
 import json
@@ -26,6 +53,15 @@ from fpdf import FPDF
 # ======================================================================================
 # 1. EXPERIMENT CONFIGURATION & EDUCATIONAL CONTENT
 # ======================================================================================
+
+LAB_NAME = "KGIRS Virtual Lab"
+
+# Section order required for every experiment in the Virtual Lab
+SECTIONS = ["Purpose", "Theory", "Simulation", "Quiz", "Report Generation", "Certificate", "References"]
+
+# True  = the certificate unlocks only after the quiz has been submitted
+# False = students can download it any time
+CERTIFICATE_REQUIRES_QUIZ = True
 
 EXPERIMENT_CONFIG = {
     "number": 8,
@@ -81,7 +117,7 @@ so no database server is needed.
 3. **Query**: Find the neighbors of a node and the shortest path between two nodes.
     """,
     "procedure": [
-        "Step 1: Review the theoretical background, objectives, and key terminology.",
+        "Step 1: Review the purpose, theoretical background and key terminology.",
         "Step 2: Navigate to the Simulation section in the sidebar menu.",
         "Step 3: Optionally click 'Load Sample Graph' to start from a small pre-built graph.",
         "Step 4: In 'Create / Update / Delete', add nodes with a label and a name property.",
@@ -90,7 +126,8 @@ so no database server is needed.
         "Step 7: In 'Query', find the neighbors of a node and the shortest path between two nodes.",
         "Step 8: In 'Command Console', try graph query commands such as CREATE and MATCH.",
         "Step 9: Complete the assessment Quiz to test your conceptual understanding.",
-        "Step 10: Open Report Generation, enter your details, and download your PDF report."
+        "Step 10: Open Report Generation, enter your details, and download your PDF report.",
+        "Step 11: Open Certificate to download your certificate of completion."
     ],
     "key_terms": {
         "Node": "An entity in the graph (e.g. a Person or a Company).",
@@ -101,6 +138,15 @@ so no database server is needed.
         "Shortest Path": "The fewest-hop chain of relationships connecting two nodes."
     }
 }
+
+REFERENCES = [
+    "Angles, R., & Gutierrez, C. (2008). Survey of graph database models. "
+    "*ACM Computing Surveys*, 40(1).",
+    "Robinson, I., Webber, J., & Eifrem, E. (2015). *Graph Databases* (2nd ed.). O'Reilly Media.",
+    "NetworkX Documentation: https://networkx.org/documentation/stable/",
+    "Plotly Python Documentation: https://plotly.com/python/",
+    "Streamlit Documentation: https://docs.streamlit.io/",
+]
 
 SIMULATION_CONFIG = {
     "default_node_label": "Person",
@@ -722,7 +768,7 @@ def bar_chart(title: str, counts: dict, x_title: str) -> go.Figure:
 
 
 # ======================================================================================
-# 3. LAB REPORT PDF EXPORTER
+# 3. PDF EXPORTERS: LAB REPORT AND CERTIFICATE
 # ======================================================================================
 
 _PDF_REPLACEMENTS = {
@@ -865,20 +911,103 @@ def generate_pdf_report(student_name: str, roll_nos: str, date_str: str,
     return bytes(pdf.output())
 
 
+def generate_certificate_pdf(student_name: str, roll_nos: str, date_str: str,
+                             quiz_score: int, quiz_total: int, quiz_submitted: bool) -> bytes:
+    """Builds a one-page landscape A4 certificate of completion for this experiment."""
+    pdf = FPDF(orientation="L", unit="mm", format="A4")
+    pdf.set_auto_page_break(auto=False)
+    pdf.set_margins(28, 20, 28)
+    pdf.add_page()
+    w, h = pdf.w, pdf.h
+
+    # Double border
+    pdf.set_draw_color(30, 58, 138)
+    pdf.set_line_width(1.6)
+    pdf.rect(8, 8, w - 16, h - 16)
+    pdf.set_draw_color(147, 163, 199)
+    pdf.set_line_width(0.4)
+    pdf.rect(12, 12, w - 24, h - 24)
+
+    # Heading
+    pdf.set_y(26)
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.set_text_color(71, 85, 105)
+    pdf.cell(0, 8, _pdf_safe(LAB_NAME.upper()), new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.set_font("Times", "B", 36)
+    pdf.set_text_color(30, 58, 138)
+    pdf.cell(0, 20, "Certificate of Completion", new_x="LMARGIN", new_y="NEXT", align="C")
+    y = pdf.get_y() + 1
+    pdf.set_draw_color(30, 58, 138)
+    pdf.set_line_width(0.6)
+    pdf.line(w / 2 - 30, y, w / 2 + 30, y)
+    pdf.set_y(y + 8)
+
+    # Body
+    pdf.set_font("Helvetica", "", 13)
+    pdf.set_text_color(51, 65, 85)
+    pdf.cell(0, 10, "This is to certify that", new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.set_font("Times", "BI", 28)
+    pdf.set_text_color(15, 23, 42)
+    pdf.multi_cell(0, 14, _pdf_safe(student_name.strip()), new_x="LMARGIN", new_y="NEXT", align="C")
+    if roll_nos.strip():
+        pdf.set_font("Helvetica", "", 11)
+        pdf.set_text_color(71, 85, 105)
+        pdf.cell(0, 8, _pdf_safe(f"Roll No(s): {roll_nos.strip()}"), new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.ln(4)
+    pdf.set_font("Helvetica", "", 13)
+    pdf.set_text_color(51, 65, 85)
+    pdf.cell(0, 9, "has successfully completed the virtual lab experiment", new_x="LMARGIN", new_y="NEXT",
+             align="C")
+    pdf.set_font("Helvetica", "B", 17)
+    pdf.set_text_color(30, 58, 138)
+    pdf.multi_cell(0, 10, _pdf_safe(FULL_TITLE), new_x="LMARGIN", new_y="NEXT", align="C")
+    if quiz_submitted and quiz_total:
+        pct = int(quiz_score / quiz_total * 100)
+        pdf.ln(2)
+        pdf.set_font("Helvetica", "", 11)
+        pdf.set_text_color(71, 85, 105)
+        pdf.cell(0, 8, f"Quiz score: {quiz_score} / {quiz_total} ({pct}%)", new_x="LMARGIN", new_y="NEXT",
+                 align="C")
+
+    # Date (left) and signature (right)
+    base_y = h - 38
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.set_text_color(15, 23, 42)
+    pdf.set_xy(35, base_y - 8)
+    pdf.cell(60, 6, _pdf_safe(date_str), align="C")
+    pdf.set_draw_color(120, 130, 150)
+    pdf.set_line_width(0.3)
+    pdf.line(35, base_y, 95, base_y)
+    pdf.line(w - 95, base_y, w - 35, base_y)
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_text_color(100, 116, 139)
+    pdf.set_xy(35, base_y + 2)
+    pdf.cell(60, 6, "Date", align="C")
+    pdf.set_xy(w - 95, base_y + 2)
+    pdf.cell(60, 6, "Instructor Signature", align="C")
+
+    return bytes(pdf.output())
+
+
 # ======================================================================================
-# 4. SECTION RENDERERS: THEORY, SIMULATION, QUIZ, REPORT
+# 4. SECTION RENDERERS: PURPOSE, THEORY, SIMULATION, QUIZ, REPORT, CERTIFICATE, REFERENCES
 # ======================================================================================
 
-def render_theory_section():
-    """Renders Section 1: Aim, Theory, Objectives, Procedure and Key Terms."""
-    st.header("Theoretical Framework & Background")
+def render_purpose_section():
+    """Renders Section 1: Aim, expected outcome and learning objectives."""
+    st.header("Purpose")
     st.markdown(f"**Aim:** {EXPERIMENT_CONFIG['aim']}")
     st.markdown(f"**Expected Outcome:** {EXPERIMENT_CONFIG['expected_outcome']}")
-    st.markdown(THEORY_CONTENT["background"])
 
     st.subheader("Learning Objectives")
     for i, obj in enumerate(EXPERIMENT_CONFIG["objectives"]):
         st.write(f"- **Goal {i + 1}**: {obj}")
+
+
+def render_theory_section():
+    """Renders Section 2: background theory, experimental procedure and key terms."""
+    st.header("Theoretical Framework & Background")
+    st.markdown(THEORY_CONTENT["background"])
 
     st.divider()
     st.subheader("Experimental Procedure")
@@ -893,18 +1022,9 @@ def render_theory_section():
         )
         st.table(var_df)
 
-    with st.expander("References"):
-        st.markdown(
-            "- NetworkX Documentation: https://networkx.org/documentation/stable/\n"
-            "- Streamlit Documentation: https://docs.streamlit.io/\n"
-            "- Plotly Python Documentation: https://plotly.com/python/\n"
-            "- Angles, R., & Gutierrez, C. (2008). Survey of graph database models. "
-            "*ACM Computing Surveys*, 40(1)."
-        )
-
 
 def render_simulation_section():
-    """Renders Section 2: interactive graph database sandbox."""
+    """Renders Section 3: interactive graph database sandbox."""
     st.header("Interactive Simulation Sandbox")
     st.info("Create nodes and relationships, and run queries to explore the graph.")
 
@@ -1146,7 +1266,7 @@ def render_simulation_section():
 
 
 def render_quiz_section():
-    """Renders Section 3: assessment quiz with self-grading and feedback."""
+    """Renders Section 4: assessment quiz with self-grading and feedback."""
     st.header("Concept Assessment Quiz")
     st.write("Answer the conceptual questions below to evaluate your understanding of the experiment.")
 
@@ -1198,7 +1318,7 @@ def render_quiz_section():
 
 
 def render_report_section():
-    """Renders Section 4: lab report generator with PDF export."""
+    """Renders Section 5: lab report generator with PDF export."""
     st.header("Report Generation")
     st.write("Compile your details, final graph, and quiz evaluation into a PDF report.")
 
@@ -1260,6 +1380,67 @@ def render_report_section():
         type="primary",
     )
 
+
+def render_certificate_section():
+    """Renders Section 6: certificate of completion with PDF download."""
+    st.header("Certificate")
+    st.write("Confirm your details to generate your certificate of completion for this experiment.")
+
+    info = st.session_state["student_info"]
+    try:
+        default_date = datetime.strptime(info.get("date", ""), "%Y-%m-%d")
+    except ValueError:
+        default_date = datetime.now()
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        student_name = st.text_input("Student Name(s)", value=info.get("name", ""),
+                                     placeholder="Enter member names", key="cert_name")
+    with col2:
+        roll_nos = st.text_input("Roll No(s).", value=info.get("id", EXPERIMENT_CONFIG["roll_numbers"]),
+                                 key="cert_roll")
+    with col3:
+        cert_date = st.date_input("Date", value=default_date, key="cert_date")
+
+    # Keep the details shared with the Report Generation section
+    info["name"] = student_name
+    info["id"] = roll_nos
+    info["date"] = str(cert_date)
+
+    quiz_submitted = st.session_state.get("quiz_submitted", False)
+    quiz_score = st.session_state.get("quiz_score", 0)
+
+    if CERTIFICATE_REQUIRES_QUIZ and not quiz_submitted:
+        st.info("Submit the Quiz to unlock your certificate.")
+        return
+    if not student_name.strip():
+        st.warning("Enter your name(s) above to generate the certificate.")
+        return
+
+    st.success(f"Certificate ready for **{student_name.strip()}**.")
+    certificate_bytes = generate_certificate_pdf(
+        student_name=student_name,
+        roll_nos=roll_nos,
+        date_str=str(cert_date),
+        quiz_score=quiz_score,
+        quiz_total=len(quiz_questions()),
+        quiz_submitted=quiz_submitted,
+    )
+    st.download_button(
+        "Download Certificate (PDF)",
+        data=certificate_bytes,
+        file_name="lab_certificate.pdf",
+        mime="application/pdf",
+        type="primary",
+    )
+
+
+def render_references_section():
+    """Renders Section 7: references."""
+    st.header("References")
+    st.markdown("\n".join(f"{i}. {ref}" for i, ref in enumerate(REFERENCES, start=1)))
+
+
 # ======================================================================================
 # 5. MAIN ENTRYPOINT & NAVIGATION
 # ======================================================================================
@@ -1282,6 +1463,17 @@ def init_session_state():
             st.session_state[key] = factory()
 
 
+SECTION_RENDERERS = {
+    "Purpose": render_purpose_section,
+    "Theory": render_theory_section,
+    "Simulation": render_simulation_section,
+    "Quiz": render_quiz_section,
+    "Report Generation": render_report_section,
+    "Certificate": render_certificate_section,
+    "References": render_references_section,
+}
+
+
 def main():
     st.set_page_config(
         page_title=f"Virtual Lab | {EXPERIMENT_CONFIG['title']}",
@@ -1292,12 +1484,9 @@ def main():
     init_session_state()
 
     st.title(FULL_TITLE)
-    st.caption(f"Roll No(s): {EXPERIMENT_CONFIG['roll_numbers']}")
+    st.caption(f"{LAB_NAME} | Roll No(s): {EXPERIMENT_CONFIG['roll_numbers']}")
 
-    section = st.sidebar.radio(
-        "Lab Navigator",
-        options=["Theory", "Simulation", "Quiz", "Report Generation"]
-    )
+    section = st.sidebar.radio("Lab Navigator", options=SECTIONS)
 
     st.sidebar.divider()
     st.sidebar.subheader("Progress Tracker")
@@ -1308,14 +1497,7 @@ def main():
     if st.session_state.get("quiz_submitted", False):
         st.sidebar.write(f"- **Quiz Score:** `{st.session_state.get('quiz_score', 0)} / {len(quiz_questions())}`")
 
-    if section == "Theory":
-        render_theory_section()
-    elif section == "Simulation":
-        render_simulation_section()
-    elif section == "Quiz":
-        render_quiz_section()
-    elif section == "Report Generation":
-        render_report_section()
+    SECTION_RENDERERS[section]()
 
 
 if __name__ == "__main__":
